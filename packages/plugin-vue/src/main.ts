@@ -10,7 +10,7 @@ import {
 import { PluginContext, TransformPluginContext } from 'rollup'
 import { resolveScript } from './script'
 import { transformTemplateInMain } from './template'
-import { isOnlyTemplateChanged } from './handleHotUpdate'
+import { isOnlyTemplateChanged, isEqualBlock } from './handleHotUpdate'
 import { RawSourceMap, SourceMapConsumer, SourceMapGenerator } from 'source-map'
 import { createRollupError } from './utils/error'
 
@@ -71,11 +71,23 @@ export async function transformMain(
     ))
   }
 
-  const renderReplace = hasTemplateImport
-    ? ssr
+  let renderReplace = ''
+  if (hasTemplateImport) {
+    renderReplace = ssr
       ? `_sfc_main.ssrRender = _sfc_ssrRender`
       : `_sfc_main.render = _sfc_render`
-    : ''
+  } else {
+    // #2128
+    // User may empty the template but we didn't provide rerender function before
+    if (
+      prevDescriptor &&
+      !isEqualBlock(descriptor.template, prevDescriptor.template)
+    ) {
+      renderReplace = ssr
+        ? `_sfc_main.ssrRender = () => {}`
+        : `_sfc_main.render = () => {}`
+    }
+  }
 
   // styles
   const stylesCode = await genStyleCode(descriptor, pluginContext)
@@ -102,7 +114,12 @@ export async function transformMain(
   output.push('export default _sfc_main')
 
   // HMR
-  if (devServer && !ssr && !isProduction) {
+  if (
+    devServer &&
+    devServer.config.server.hmr !== false &&
+    !ssr &&
+    !isProduction
+  ) {
     output.push(`_sfc_main.__hmrId = ${JSON.stringify(descriptor.id)}`)
     output.push(
       `typeof __VUE_HMR_RUNTIME__ !== 'undefined' && ` +
@@ -207,6 +224,8 @@ async function genTemplateCode(
   }
 }
 
+const exportDefaultClassRE = /(?:(?:^|\n|;)\s*)export\s+default\s+class\s+([\w$]+)/
+
 async function genScriptCode(
   descriptor: SFCDescriptor,
   options: ResolvedOptions,
@@ -226,7 +245,19 @@ async function genScriptCode(
       (!script.lang || (script.lang === 'ts' && options.devServer)) &&
       !script.src
     ) {
-      scriptCode = rewriteDefault(script.content, `_sfc_main`)
+      // TODO remove the class check logic after upgrading @vue/compiler-sfc
+      const classMatch = script.content.match(exportDefaultClassRE)
+      if (classMatch) {
+        scriptCode =
+          script.content.replace(exportDefaultClassRE, `\nclass $1`) +
+          `\nconst _sfc_main = ${classMatch[1]}`
+        if (/export\s+default/.test(scriptCode)) {
+          // fallback if there are still export default
+          scriptCode = rewriteDefault(script.content, `_sfc_main`)
+        }
+      } else {
+        scriptCode = rewriteDefault(script.content, `_sfc_main`)
+      }
       map = script.map
       if (script.lang === 'ts') {
         const result = await options.devServer!.transformWithEsbuild(
@@ -340,7 +371,9 @@ async function linkSrcToDescriptor(
 ) {
   const srcFile =
     (await pluginContext.resolve(src, descriptor.filename))?.id || src
-  setDescriptor(srcFile, descriptor)
+  // #1812 if the src points to a dep file, the resolved id may contain a
+  // version query.
+  setDescriptor(srcFile.replace(/\?.*$/, ''), descriptor)
 }
 
 // these are built-in query parameters so should be ignored

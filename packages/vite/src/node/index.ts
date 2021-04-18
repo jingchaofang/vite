@@ -1,15 +1,38 @@
-export * from './server'
-export * from './build'
-export * from './optimizer'
 export * from './config'
+export { createServer } from './server'
+export { build } from './build'
+export { optimizeDeps } from './optimizer'
 export { send } from './server/send'
 export { createLogger } from './logger'
 export { resolvePackageData, resolvePackageEntry } from './plugins/resolve'
 export { normalizePath } from './utils'
 
 // additional types
+export type {
+  ViteDevServer,
+  ServerOptions,
+  CorsOptions,
+  CorsOrigin,
+  ServerHook
+} from './server'
+export type {
+  BuildOptions,
+  LibraryOptions,
+  LibraryFormats,
+  ResolvedBuildOptions
+} from './build'
+export type {
+  DepOptimizationMetadata,
+  DepOptimizationOptions
+} from './optimizer'
 export type { Plugin } from './plugin'
-export type { Logger, LogOptions, LogLevel, LogType } from './logger'
+export type {
+  Logger,
+  LogOptions,
+  LogLevel,
+  LogType,
+  LoggerOptions
+} from './logger'
 export type {
   AliasOptions,
   ResolverFunction,
@@ -26,7 +49,12 @@ export type {
 export type { CSSOptions, CSSModulesOptions } from './plugins/css'
 export type { JsonOptions } from './plugins/json'
 export type { ESBuildOptions, ESBuildTransformResult } from './plugins/esbuild'
-export type { PackageData } from './plugins/resolve'
+export type { Manifest, ManifestChunk } from './plugins/manifest'
+export type {
+  PackageData,
+  ResolveOptions,
+  InternalResolveOptions
+} from './plugins/resolve'
 export type { WebSocketServer } from './server/ws'
 export type { PluginContainer } from './server/pluginContainer'
 export type { ModuleGraph, ModuleNode } from './server/moduleGraph'

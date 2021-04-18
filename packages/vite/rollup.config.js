@@ -1,7 +1,6 @@
 // @ts-check
 import fs from 'fs'
 import path from 'path'
-import slash from 'slash'
 import nodeResolve from '@rollup/plugin-node-resolve'
 import typescript from '@rollup/plugin-typescript'
 import commonjs from '@rollup/plugin-commonjs'
@@ -14,8 +13,30 @@ import chalk from 'chalk'
 /**
  * @type { import('rollup').RollupOptions }
  */
+const envConfig = {
+  input: path.resolve(__dirname, 'src/client/env.ts'),
+  plugins: [
+    typescript({
+      target: 'es2018',
+      include: ['src/client/env.ts'],
+      baseUrl: path.resolve(__dirname, 'src/env'),
+      paths: {
+        'types/*': ['../../types/*']
+      }
+    })
+  ],
+  output: {
+    dir: path.resolve(__dirname, 'dist/client'),
+    sourcemap: true
+  }
+}
+
+/**
+ * @type { import('rollup').RollupOptions }
+ */
 const clientConfig = {
   input: path.resolve(__dirname, 'src/client/client.ts'),
+  external: ['./env'],
   plugins: [
     typescript({
       target: 'es2018',
@@ -27,7 +48,8 @@ const clientConfig = {
     })
   ],
   output: {
-    dir: path.resolve(__dirname, 'dist/client')
+    dir: path.resolve(__dirname, 'dist/client'),
+    sourcemap: true
   }
 }
 
@@ -47,7 +69,8 @@ const sharedNodeOptions = {
     exports: 'named',
     format: 'cjs',
     externalLiveBindings: false,
-    freeze: false
+    freeze: false,
+    sourcemap: true
   },
   onwarn(warning, warn) {
     // node-resolve complains a lot about this but seems to still work?
@@ -102,7 +125,7 @@ const nodeConfig = {
         src: `require.resolve('terser'`,
         replacement: `require.resolve('vite/dist/node/terser'`
       },
-      // chokidar -> fs-events
+      // chokidar -> fsevents
       'fsevents-handler.js': {
         src: `require('fsevents')`,
         replacement: `eval('require')('fsevents')`
@@ -167,7 +190,7 @@ function shimDepsPlugin(deps) {
     name: 'shim-deps',
     transform(code, id) {
       for (const file in deps) {
-        if (slash(id).endsWith(file)) {
+        if (id.replace(/\\/g, '/').endsWith(file)) {
           const { src, replacement, pattern } = deps[file]
 
           const magicString = new MagicString(code)
@@ -318,4 +341,4 @@ function licensePlugin() {
   })
 }
 
-export default [clientConfig, nodeConfig, terserConfig]
+export default [envConfig, clientConfig, nodeConfig, terserConfig]

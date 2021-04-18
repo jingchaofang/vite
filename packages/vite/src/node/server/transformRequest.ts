@@ -15,6 +15,7 @@ import {
 } from '../utils'
 import { checkPublicFile } from '../plugins/asset'
 import { ssrTransform } from '../ssr/ssrTransform'
+import { injectSourcesContent } from './sourcemap'
 
 const debugLoad = createDebugger('vite:load')
 const debugTransform = createDebugger('vite:transform')
@@ -30,19 +31,16 @@ export interface TransformResult {
 
 export interface TransformOptions {
   ssr?: boolean
+  html?: boolean
 }
 
 export async function transformRequest(
   url: string,
-  {
-    config: { root, logger },
-    pluginContainer,
-    moduleGraph,
-    watcher
-  }: ViteDevServer,
+  { config, pluginContainer, moduleGraph, watcher }: ViteDevServer,
   options: TransformOptions = {}
 ): Promise<TransformResult | null> {
   url = removeTimestampQuery(url)
+  const { root, logger } = config
   const prettyUrl = isDebug ? prettifyUrl(url, root) : ''
   const ssr = !!options.ssr
 
@@ -59,13 +57,18 @@ export async function transformRequest(
   const id = (await pluginContainer.resolveId(url))?.id || url
   const file = cleanUrl(id)
 
-  let code = null
+  let code: string | null = null
   let map: SourceDescription['map'] = null
 
   // load
-  const loadStart = Date.now()
+  const loadStart = isDebug ? Date.now() : 0
   const loadResult = await pluginContainer.load(id, ssr)
   if (loadResult == null) {
+    // if this is an html request and there is no load result, skip ahead to
+    // SPA fallback.
+    if (options.html && !id.endsWith('.html')) {
+      return null
+    }
     // try fallback loading it from fs as string
     // if the file is a binary, there should be a plugin that already loaded it
     // as string
@@ -99,7 +102,7 @@ export async function transformRequest(
     }
   }
   if (code == null) {
-    if (checkPublicFile(url, root)) {
+    if (checkPublicFile(url, config)) {
       throw new Error(
         `Failed to load url ${url} (resolved id: ${id}). ` +
           `This file is in /public and will be copied as-is during build without ` +
@@ -116,7 +119,7 @@ export async function transformRequest(
   ensureWatchedFile(watcher, mod.file, root)
 
   // transform
-  const transformStart = Date.now()
+  const transformStart = isDebug ? Date.now() : 0
   const transformResult = await pluginContainer.transform(code, id, map, ssr)
   if (
     transformResult == null ||
@@ -129,16 +132,23 @@ export async function transformRequest(
       )
   } else {
     isDebug && debugTransform(`${timeFrom(transformStart)} ${prettyUrl}`)
-    if (typeof transformResult === 'object') {
-      code = transformResult.code!
-      map = transformResult.map
-    } else {
-      code = transformResult
+    code = transformResult.code!
+    map = transformResult.map
+  }
+
+  if (map && mod.file) {
+    map = (typeof map === 'string' ? JSON.parse(map) : map) as SourceMap
+    if (map.mappings && !map.sourcesContent) {
+      await injectSourcesContent(map, mod.file)
     }
   }
 
   if (ssr) {
-    return (mod.ssrTransformResult = await ssrTransform(code, map as SourceMap))
+    return (mod.ssrTransformResult = await ssrTransform(
+      code,
+      map as SourceMap,
+      url
+    ))
   } else {
     return (mod.transformResult = {
       code,

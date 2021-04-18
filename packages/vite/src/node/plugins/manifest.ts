@@ -1,12 +1,18 @@
 import path from 'path'
+import { OutputChunk } from 'rollup'
 import { ResolvedConfig } from '..'
 import { Plugin } from '../plugin'
+import { chunkToEmittedCssFileMap } from './css'
+import { chunkToEmittedAssetsMap } from './asset'
+import { normalizePath } from '../utils'
 
-type Manifest = Record<string, ManifestEntry>
+export type Manifest = Record<string, ManifestChunk>
 
-interface ManifestEntry {
+export interface ManifestChunk {
+  src?: string
   file: string
-  facadeModuleId?: string
+  css?: string[]
+  assets?: string[]
   isEntry?: boolean
   isDynamicEntry?: boolean
   imports?: string[]
@@ -21,45 +27,79 @@ export function manifestPlugin(config: ResolvedConfig): Plugin {
   return {
     name: 'vite:manifest',
     generateBundle({ format }, bundle) {
+      function getChunkName(chunk: OutputChunk) {
+        if (chunk.facadeModuleId) {
+          let name = normalizePath(
+            path.relative(config.root, chunk.facadeModuleId)
+          )
+          if (format === 'system' && !chunk.name.includes('-legacy')) {
+            const ext = path.extname(name)
+            name = name.slice(0, -ext.length) + `-legacy` + ext
+          }
+          return name
+        } else {
+          return `_` + path.basename(chunk.fileName)
+        }
+      }
+
+      function getInternalImports(imports: string[]): string[] {
+        const filteredImports: string[] = []
+
+        for (const file of imports) {
+          if (bundle[file] === undefined) {
+            continue
+          }
+
+          filteredImports.push(getChunkName(bundle[file] as OutputChunk))
+        }
+
+        return filteredImports
+      }
+
+      function createChunk(chunk: OutputChunk): ManifestChunk {
+        const manifestChunk: ManifestChunk = {
+          file: chunk.fileName
+        }
+
+        if (chunk.facadeModuleId) {
+          manifestChunk.src = getChunkName(chunk)
+        }
+        if (chunk.isEntry) {
+          manifestChunk.isEntry = true
+        }
+        if (chunk.isDynamicEntry) {
+          manifestChunk.isDynamicEntry = true
+        }
+
+        if (chunk.imports.length) {
+          const internalImports = getInternalImports(chunk.imports)
+          if (internalImports.length > 0) {
+            manifestChunk.imports = internalImports
+          }
+        }
+
+        if (chunk.dynamicImports.length) {
+          const internalImports = getInternalImports(chunk.dynamicImports)
+          if (internalImports.length > 0) {
+            manifestChunk.dynamicImports = internalImports
+          }
+        }
+
+        const cssFiles = chunkToEmittedCssFileMap.get(chunk)
+        if (cssFiles) {
+          manifestChunk.css = [...cssFiles]
+        }
+
+        const assets = chunkToEmittedAssetsMap.get(chunk)
+        if (assets) [(manifestChunk.assets = [...assets])]
+
+        return manifestChunk
+      }
+
       for (const file in bundle) {
         const chunk = bundle[file]
         if (chunk.type === 'chunk') {
-          if (chunk.isEntry || chunk.isDynamicEntry) {
-            let name =
-              format === 'system' && !chunk.name.includes('-legacy')
-                ? chunk.name + '-legacy'
-                : chunk.name
-            let dedupeIndex = 0
-            while (name + '.js' in manifest) {
-              name = `${name}-${++dedupeIndex}`
-            }
-            const entry: ManifestEntry = {
-              isEntry: chunk.isEntry,
-              isDynamicEntry: chunk.isDynamicEntry,
-              file: chunk.fileName,
-              imports: chunk.imports,
-              dynamicImports: chunk.dynamicImports
-            }
-
-            if (
-              chunk.facadeModuleId &&
-              chunk.facadeModuleId.startsWith(config.root)
-            ) {
-              entry.facadeModuleId = chunk.facadeModuleId.slice(
-                config.root.length + 1
-              )
-            }
-
-            manifest[name + '.js'] = entry
-          }
-        } else if (chunk.name) {
-          const ext = path.extname(chunk.name) || ''
-          let name = chunk.name.slice(0, -ext.length)
-          let dedupeIndex = 0
-          while (name + ext in manifest) {
-            name = `${name}-${++dedupeIndex}`
-          }
-          manifest[name + ext] = { file: chunk.fileName }
+          manifest[getChunkName(chunk)] = createChunk(chunk)
         }
       }
 

@@ -18,7 +18,7 @@ export interface LogOptions {
   timestamp?: boolean
 }
 
-const LogLevels: Record<LogLevel, number> = {
+export const LogLevels: Record<LogLevel, number> = {
   silent: 0,
   error: 1,
   warn: 2,
@@ -30,18 +30,29 @@ let lastMsg: string | undefined
 let sameCount = 0
 
 function clearScreen() {
-  const blank = '\n'.repeat(process.stdout.rows - 2)
+  const repeatCount = process.stdout.rows - 2
+  const blank = repeatCount > 0 ? '\n'.repeat(repeatCount) : ''
   console.log(blank)
   readline.cursorTo(process.stdout, 0, 0)
   readline.clearScreenDown(process.stdout)
 }
 
+export interface LoggerOptions {
+  prefix?: string
+  allowClearScreen?: boolean
+}
+
 export function createLogger(
   level: LogLevel = 'info',
-  allowClearScreen = true
+  options: LoggerOptions = {}
 ): Logger {
+  const { prefix = '[vite]', allowClearScreen = true } = options
+
   const thresh = LogLevels[level]
-  const clear = allowClearScreen && !process.env.CI ? clearScreen : () => {}
+  const clear =
+    allowClearScreen && process.stdout.isTTY && !process.env.CI
+      ? clearScreen
+      : () => {}
 
   function output(type: LogType, msg: string, options: LogOptions = {}) {
     if (thresh >= LogLevels[type]) {
@@ -50,10 +61,10 @@ export function createLogger(
         if (options.timestamp) {
           const tag =
             type === 'info'
-              ? chalk.cyan.bold(`[vite]`)
+              ? chalk.cyan.bold(prefix)
               : type === 'warn'
-              ? chalk.yellow.bold(`[vite]`)
-              : chalk.red.bold(`[vite]`)
+              ? chalk.yellow.bold(prefix)
+              : chalk.red.bold(prefix)
           return `${chalk.dim(new Date().toLocaleTimeString())} ${tag} ${msg}`
         } else {
           return msg
@@ -85,6 +96,7 @@ export function createLogger(
       output('warn', msg, opts)
     },
     error(msg, opts) {
+      logger.hasWarned = true
       output('error', msg, opts)
     },
     clearScreen(type) {

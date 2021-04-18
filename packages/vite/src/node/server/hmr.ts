@@ -1,14 +1,15 @@
 import fs from 'fs'
 import path from 'path'
-import { createServer, ViteDevServer } from '..'
-import { createDebugger, lookupFile, normalizePath } from '../utils'
-import { ModuleNode } from './moduleGraph'
 import chalk from 'chalk'
-import slash from 'slash'
+import { createServer, ViteDevServer } from '..'
+import { createDebugger, normalizePath } from '../utils'
+import { ModuleNode } from './moduleGraph'
 import { Update } from 'types/hmrPayload'
 import { CLIENT_DIR } from '../constants'
 import { RollupError } from 'rollup'
+import { prepareError } from './middlewares/error'
 import match from 'minimatch'
+import { Server } from 'http'
 
 export const debugHmr = createDebugger('vite:hmr')
 
@@ -21,6 +22,7 @@ export interface HmrOptions {
   path?: string
   timeout?: number
   overlay?: boolean
+  server?: Server
 }
 
 export interface HmrContext {
@@ -42,32 +44,21 @@ export async function handleHMRUpdate(
   const { ws, config, moduleGraph } = server
   const shortFile = getShortName(file, config.root)
 
-  if (file === config.configFile || file.endsWith('.env')) {
-    // TODO auto restart server
+  const isConfig = file === config.configFile
+  const isConfigDependency = config.configFileDependencies.some(
+    (name) => file === path.resolve(name)
+  )
+  const isEnv = config.inlineConfig.envFile !== false && file.endsWith('.env')
+  if (isConfig || isConfigDependency || isEnv) {
+    // auto restart server
     debugHmr(`[config change] ${chalk.dim(shortFile)}`)
     config.logger.info(
-      chalk.green('config or .env file changed, restarting server...'),
+      chalk.green(
+        `${path.relative(process.cwd(), file)} changed, restarting server...`
+      ),
       { clear: true, timestamp: true }
     )
     await restartServer(server)
-    return
-  }
-
-  if (
-    file.endsWith('package.json') &&
-    file ===
-      normalizePath(lookupFile(config.root, [`package.json`], true) || '')
-  ) {
-    const deps = require(file).dependencies || {}
-    const prevDeps = server._optimizeDepsMetadata?.dependencies || {}
-    // check if deps have changed
-    if (hasDepsChanged(deps, prevDeps)) {
-      config.logger.info(
-        chalk.green('dependencies have changed, restarting server...'),
-        { clear: true, timestamp: true }
-      )
-      await restartServer(server)
-    }
     return
   }
 
@@ -114,7 +105,7 @@ export async function handleHMRUpdate(
         type: 'full-reload',
         path: config.server.middlewareMode
           ? '*'
-          : '/' + slash(path.relative(config.root, file))
+          : '/' + normalizePath(path.relative(config.root, file))
       })
     } else {
       // loaded but not in the module graph, probably not js
@@ -180,11 +171,11 @@ export async function handleFileAddUnlink(
   file: string,
   server: ViteDevServer,
   isUnlink = false
-) {
+): Promise<void> {
+  const modules = [...(server.moduleGraph.getModulesByFile(file) ?? [])]
   if (isUnlink && file in server._globImporters) {
     delete server._globImporters[file]
   } else {
-    const modules = []
     for (const i in server._globImporters) {
       const { module, base, pattern } = server._globImporters[i]
       const relative = path.relative(base, file)
@@ -192,6 +183,8 @@ export async function handleFileAddUnlink(
         modules.push(module)
       }
     }
+  }
+  if (modules.length > 0) {
     updateModules(
       getShortName(file, server.config.root),
       modules,
@@ -251,13 +244,17 @@ function invalidate(mod: ModuleNode, timestamp: number, seen: Set<ModuleNode>) {
   seen.add(mod)
   mod.lastHMRTimestamp = timestamp
   mod.transformResult = null
-  mod.importers.forEach((importer) => invalidate(importer, timestamp, seen))
+  mod.importers.forEach((importer) => {
+    if (!importer.acceptedHmrDeps.has(mod)) {
+      invalidate(importer, timestamp, seen)
+    }
+  })
 }
 
 export function handlePrunedModules(
   mods: Set<ModuleNode>,
   { ws }: ViteDevServer
-) {
+): void {
   // update the disposed modules' hmr timestamp
   // since if it's re-imported, it should re-apply side effects
   // and without the timestamp the browser will not re-import it!
@@ -426,22 +423,21 @@ async function readModifiedFile(file: string): Promise<string> {
   }
 }
 
-function hasDepsChanged(deps: any, prevDeps: any): boolean {
-  if (Object.keys(deps).length !== Object.keys(prevDeps).length) {
-    return true
-  }
-  for (const key in deps) {
-    if (deps[key] !== prevDeps[key]) {
-      return true
-    }
-  }
-  return false
-}
-
 async function restartServer(server: ViteDevServer) {
+  // @ts-ignore
+  global.__vite_start_time = Date.now()
+  let newServer = null
+  try {
+    newServer = await createServer(server.config.inlineConfig)
+  } catch (err) {
+    server.ws.send({
+      type: 'error',
+      err: prepareError(err)
+    })
+    return
+  }
+
   await server.close()
-  ;(global as any).__vite_start_time = Date.now()
-  const newServer = await createServer(server.config.inlineConfig)
   for (const key in newServer) {
     if (key !== 'app') {
       // @ts-ignore
@@ -449,7 +445,7 @@ async function restartServer(server: ViteDevServer) {
     }
   }
   if (!server.config.server.middlewareMode) {
-    await server.listen()
+    await server.listen(undefined, true)
   } else {
     server.config.logger.info('server restarted.', { timestamp: true })
   }

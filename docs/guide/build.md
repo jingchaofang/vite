@@ -1,6 +1,6 @@
 # Building for Production
 
-When it is time to deploy your app for production, simply run the `vite build` command. By default, it uses `<root>/index.html` as the build entry point, and produces an application bundle that is suitable to be served over a static hosting service.
+When it is time to deploy your app for production, simply run the `vite build` command. By default, it uses `<root>/index.html` as the build entry point, and produces an application bundle that is suitable to be served over a static hosting service. Check out the [Deploying a Static Site](./static-deploy) for guides about popular services.
 
 ## Browser Compatibility
 
@@ -21,7 +21,7 @@ Legacy browsers can be supported via [@vitejs/plugin-legacy](https://github.com/
 
 ## Public Base Path
 
-- Related: [Asset Handling](./features#asset-handling)
+- Related: [Asset Handling](./assets)
 
 If you are deploying your project under a nested public path, simply specify the [`base` config option](/config/#base) and all asset paths will be rewritten accordingly. This option can also be specified as a command line flag, e.g. `vite build --base=/my/public/path/`.
 
@@ -46,18 +46,33 @@ module.exports = {
 
 For example, you can specify multiple Rollup outputs with plugins that are only applied during build.
 
+## Rebuild on files changes
+
+You can enable rollup watcher with `vite build --watch`. Or, you can directly adjust the underlying [`WatcherOptions`](https://rollupjs.org/guide/en/#watch-options) via `build.watch`:
+
+```js
+// vite.config.js
+module.exports = {
+  build: {
+    watch: {
+      // https://rollupjs.org/guide/en/#watch-options
+    }
+  }
+}
+```
+
 ## Multi-Page App
 
 Suppose you have the following source code structure:
 
 ```
-|-package.json
-|-vite.config.js
-|-index.html
-|-main.js
-|-nested/
-|---index.html
-|---nested.js
+├── package.json
+├── vite.config.js
+├── index.html
+├── main.js
+└── nested
+    ├── index.html
+    └── nested.js
 ```
 
 During dev, simply navigate or link to `/nested/` - it works as expected, just like for a normal static file server.
@@ -79,6 +94,8 @@ module.exports = {
   }
 }
 ```
+
+If you specify a different root, remember that `__dirname` will still be the folder of your vite.config.js file when resolving the input paths. Therfore, you will need to add your `root` entry to the arguments for `resolve`. 
 
 ## Library Mode
 

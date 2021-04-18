@@ -59,6 +59,10 @@ export async function getBg(el: string | ElementHandle) {
   return el.evaluate((el) => getComputedStyle(el as Element).backgroundImage)
 }
 
+export function readFile(filename: string) {
+  return fs.readFileSync(path.resolve(testDir, filename), 'utf-8')
+}
+
 export function editFile(filename: string, replacer: (str: string) => string) {
   if (isBuild) return
   filename = path.resolve(testDir, filename)
@@ -75,6 +79,11 @@ export function removeFile(filename: string) {
   fs.unlinkSync(path.resolve(testDir, filename))
 }
 
+export function listAssets(base = '') {
+  const assetsDir = path.join(testDir, 'dist', base, 'assets')
+  return fs.readdirSync(assetsDir)
+}
+
 export function findAssetFile(match: string | RegExp, base = '') {
   const assetsDir = path.join(testDir, 'dist', base, 'assets')
   const files = fs.readdirSync(assetsDir)
@@ -84,15 +93,22 @@ export function findAssetFile(match: string | RegExp, base = '') {
   return file ? fs.readFileSync(path.resolve(assetsDir, file), 'utf-8') : ''
 }
 
+export function readManifest(base = '') {
+  return JSON.parse(
+    fs.readFileSync(path.join(testDir, 'dist', base, 'manifest.json'), 'utf-8')
+  )
+}
+
 /**
  * Poll a getter until the value it returns includes the expected value.
  */
 export async function untilUpdated(
   poll: () => string | Promise<string>,
-  expected: string
+  expected: string,
+  runInBuild = false
 ) {
-  if (isBuild) return
-  const maxTries = process.env.CI ? 100 : 20
+  if (isBuild && !runInBuild) return
+  const maxTries = process.env.CI ? 100 : 50
   for (let tries = 0; tries < maxTries; tries++) {
     const actual = (await poll()) || ''
     if (actual.indexOf(expected) > -1 || tries === maxTries - 1) {

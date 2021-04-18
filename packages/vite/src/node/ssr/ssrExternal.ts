@@ -1,6 +1,6 @@
 import fs from 'fs'
 import path from 'path'
-import { tryNodeResolve } from '../plugins/resolve'
+import { tryNodeResolve, InternalResolveOptions } from '../plugins/resolve'
 import { lookupFile, resolveFrom } from '../utils'
 import { ResolvedConfig } from '..'
 
@@ -13,7 +13,9 @@ import { ResolvedConfig } from '..'
  */
 export function resolveSSRExternal(
   config: ResolvedConfig,
-  ssrExternals: Set<string> = new Set()
+  knownImports: string[],
+  ssrExternals: Set<string> = new Set(),
+  seen: Set<string> = new Set()
 ): string[] {
   const { root } = config
   const pkgContent = lookupFile(root, ['package.json'])
@@ -22,18 +24,34 @@ export function resolveSSRExternal(
   }
   const pkg = JSON.parse(pkgContent)
   const devDeps = Object.keys(pkg.devDependencies || {})
-  const deps = Object.keys(pkg.dependencies || {})
+  const deps = [...knownImports, ...Object.keys(pkg.dependencies || {})]
 
   for (const id of devDeps) {
     ssrExternals.add(id)
+    seen.add(id)
   }
 
+  const resolveOptions: InternalResolveOptions = {
+    root,
+    isProduction: false,
+    isBuild: true
+  }
+
+  const depsToTrace = new Set<string>()
+
   for (const id of deps) {
-    const entry = tryNodeResolve(id, root, false)?.id
+    if (seen.has(id)) {
+      continue
+    }
+    seen.add(id)
+
+    let entry
     let requireEntry
     try {
+      entry = tryNodeResolve(id, undefined, resolveOptions)?.id
       requireEntry = require.resolve(id, { paths: [root] })
     } catch (e) {
+      // resolve failed, assume include
       continue
     }
     if (!entry) {
@@ -41,22 +59,10 @@ export function resolveSSRExternal(
       ssrExternals.add(id)
       continue
     }
-    // node resolve and esm resolve resolves to the same file
-    if (path.extname(entry) !== '.js') {
-      // entry is not js, cannot externalize
-      continue
-    }
     if (!entry.includes('node_modules')) {
       // entry is not a node dep, possibly linked - don't externalize
       // instead, trace its dependencies.
-      const depRoot = path.dirname(resolveFrom(`${id}/package.json`, root))
-      resolveSSRExternal(
-        {
-          ...config,
-          root: depRoot
-        },
-        ssrExternals
-      )
+      depsToTrace.add(id)
       continue
     }
     if (entry !== requireEntry) {
@@ -64,12 +70,29 @@ export function resolveSSRExternal(
       ssrExternals.add(id)
     } else {
       // node resolve and esm resolve resolves to the same file.
+      if (!/\.m?js$/.test(entry)) {
+        // entry is not js, cannot externalize
+        continue
+      }
       // check if the entry is cjs
       const content = fs.readFileSync(entry, 'utf-8')
       if (/\bmodule\.exports\b|\bexports[.\[]|\brequire\s*\(/.test(content)) {
         ssrExternals.add(id)
       }
     }
+  }
+
+  for (const id of depsToTrace) {
+    const depRoot = path.dirname(resolveFrom(`${id}/package.json`, root))
+    resolveSSRExternal(
+      {
+        ...config,
+        root: depRoot
+      },
+      knownImports,
+      ssrExternals,
+      seen
+    )
   }
 
   if (config.ssr?.external) {
@@ -79,5 +102,22 @@ export function resolveSSRExternal(
   if (config.ssr?.noExternal) {
     externals = externals.filter((id) => !config.ssr!.noExternal!.includes(id))
   }
-  return externals
+  return externals.filter((id) => id !== 'vite')
+}
+
+export function shouldExternalizeForSSR(
+  id: string,
+  externals: string[]
+): boolean {
+  const should = externals.some((e) => {
+    if (id === e) {
+      return true
+    }
+    // deep imports, check ext before externalizing - only externalize
+    // extension-less imports and explicit .js imports
+    if (id.startsWith(e + '/') && (!path.extname(id) || id.endsWith('.js'))) {
+      return true
+    }
+  })
+  return should
 }

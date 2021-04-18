@@ -1,8 +1,25 @@
 import path from 'path'
 
-export const SUPPORTED_EXTS = ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json']
+export const DEFAULT_MAIN_FIELDS = [
+  'module',
+  'jsnext:main', // moment still uses this...
+  'jsnext'
+]
 
-export const DEP_CACHE_DIR = `.vite`
+export const DEFAULT_EXTENSIONS = [
+  '.mjs',
+  '.js',
+  '.ts',
+  '.jsx',
+  '.tsx',
+  '.json'
+]
+
+export const JS_TYPES_RE = /\.(?:j|t)sx?$|\.mjs$/
+
+export const OPTIMIZABLE_ENTRY_RE = /\.(?:m?js|ts)$/
+
+export const SPECIAL_QUERY_RE = /[\?&](?:worker|raw|url)\b/
 
 /**
  * Prefix for resolved fs paths, since windows paths may not be valid as URLs.
@@ -22,11 +39,14 @@ export const VALID_ID_PREFIX = `/@id/`
 export const NULL_BYTE_PLACEHOLDER = `__x00__`
 
 export const CLIENT_PUBLIC_PATH = `/@vite/client`
-// eslint-disable-next-line
+export const ENV_PUBLIC_PATH = `/@vite/env`
+// eslint-disable-next-line node/no-missing-require
 export const CLIENT_ENTRY = require.resolve('vite/dist/client/client.js')
+// eslint-disable-next-line node/no-missing-require
+export const ENV_ENTRY = require.resolve('vite/dist/client/env.js')
 export const CLIENT_DIR = path.dirname(CLIENT_ENTRY)
 
-export const knownAssetTypes = [
+export const KNOWN_ASSET_TYPES = [
   // images
   'png',
   'jpe?g',
@@ -56,7 +76,7 @@ export const knownAssetTypes = [
 ]
 
 export const DEFAULT_ASSETS_RE = new RegExp(
-  `\\.(` + knownAssetTypes.join('|') + `)(\\?.*)?$`
+  `\\.(` + KNOWN_ASSET_TYPES.join('|') + `)(\\?.*)?$`
 )
 
 export const DEP_VERSION_RE = /[\?&](v=[\w\.-]+)\b/
